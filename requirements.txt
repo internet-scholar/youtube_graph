@@ -1,0 +1,4 @@
+networkx>=2.4
+python-louvain>=0.13
+numpy>=1.18.1
+boto3>=1.12.0
