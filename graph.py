@@ -385,8 +385,8 @@ def main():
     try:
         min_users = 3
         timespan = 60
-        final_date = date(2019, 10, 16)
-        end = date(2019, 10, 17)
+        final_date = date(2019, 10, 18)
+        end = date(2019, 10, 19)
         create_edges(min_users=min_users, timespan=timespan, final_date=final_date, end=end)
         create_nodes(min_users=min_users, timespan=timespan, final_date=final_date, end=end)
         create_louvain(min_users=min_users, timespan=timespan, final_date=final_date, end=end)
