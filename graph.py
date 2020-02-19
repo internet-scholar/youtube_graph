@@ -214,7 +214,10 @@ CREATE_YOUTUBE_GRAPH_LOUVAIN = """
 CREATE EXTERNAL TABLE if not exists youtube_graph_louvain (
    resolution float,
    channel_id string,
-   cluster int
+   cluster int,
+   graph_size int,
+   cluster_size int,
+   cluster_count int
 )
 partitioned by (min_users int, timespan int, final_date string)
 ROW FORMAT SERDE 'org.apache.hadoop.hive.serde2.OpenCSVSerde'
@@ -246,22 +249,31 @@ def create_louvain(min_users, timespan, final_date, end):
                            weight=int(edge['weight']))
 
         with open('./louvain.csv', 'w', encoding="utf8") as csv_writer:
-            writer = csv.DictWriter(csv_writer, fieldnames=['resolution', 'channel_id', 'cluster'], dialect='unix')
+            writer = csv.DictWriter(csv_writer,
+                                    fieldnames=['resolution', 'channel_id', 'cluster',
+                                                'graph_size', 'cluster_size', 'cluster_count'],
+                                    dialect='unix')
             writer.writeheader()
             nodes = list(g)
+            graph_size = len(nodes)
             for resolution in numpy.arange(10, 0, -0.1):
                 partition = community.best_partition(g, resolution=resolution, randomize=False)
+                cluster_count = len(set(partition.values()))
                 for partition_number in set(partition.values()):
                     new_partition = list()
                     for channel_id in partition.keys():
                         if partition[channel_id] == partition_number:
                             new_partition.append(channel_id)
+                    cluster_size = len(new_partition)
                     new_partition_number = nodes.index(min(new_partition))
                     for item in new_partition:
                         new_record = dict()
                         new_record['resolution'] = "{:.1f}".format(resolution)
                         new_record['channel_id'] = item
                         new_record['cluster'] = new_partition_number
+                        new_record['graph_size'] = graph_size
+                        new_record['cluster_size'] = cluster_size
+                        new_record['cluster_count'] = cluster_count
                         writer.writerow(new_record)
 
         compressed_file = compress(filename='./louvain.csv', delete_original=True)
@@ -385,34 +397,46 @@ def main():
     try:
         min_users = 3
         timespan = 60
-        final_date = date(2019, 10, 20)
+
+        # final_date = date(2019, 10, 13)
+        # end = date(2019, 10, 14)
+        # create_edges(min_users=min_users, timespan=timespan, final_date=final_date, end=end)
+        # create_nodes(min_users=min_users, timespan=timespan, final_date=final_date, end=end)
+        # create_louvain(min_users=min_users, timespan=timespan, final_date=final_date, end=end)
+        # create_gexf(min_users=min_users, timespan=timespan, final_date=final_date, end=end)
+
+        final_date = date(2019, 10, 15)
         end = date(2019, 10, 31)
-        create_edges(min_users=min_users, timespan=timespan, final_date=final_date, end=end)
-        create_nodes(min_users=min_users, timespan=timespan, final_date=final_date, end=end)
+        # create_edges(min_users=min_users, timespan=timespan, final_date=final_date, end=end)
+        # create_nodes(min_users=min_users, timespan=timespan, final_date=final_date, end=end)
         create_louvain(min_users=min_users, timespan=timespan, final_date=final_date, end=end)
         create_gexf(min_users=min_users, timespan=timespan, final_date=final_date, end=end)
+
         final_date = date(2019, 11, 1)
         end = date(2019, 11, 30)
-        create_edges(min_users=min_users, timespan=timespan, final_date=final_date, end=end)
-        create_nodes(min_users=min_users, timespan=timespan, final_date=final_date, end=end)
+        # create_edges(min_users=min_users, timespan=timespan, final_date=final_date, end=end)
+        # create_nodes(min_users=min_users, timespan=timespan, final_date=final_date, end=end)
         create_louvain(min_users=min_users, timespan=timespan, final_date=final_date, end=end)
         create_gexf(min_users=min_users, timespan=timespan, final_date=final_date, end=end)
+
         final_date = date(2019, 12, 1)
         end = date(2019, 12, 31)
-        create_edges(min_users=min_users, timespan=timespan, final_date=final_date, end=end)
-        create_nodes(min_users=min_users, timespan=timespan, final_date=final_date, end=end)
+        # create_edges(min_users=min_users, timespan=timespan, final_date=final_date, end=end)
+        # create_nodes(min_users=min_users, timespan=timespan, final_date=final_date, end=end)
         create_louvain(min_users=min_users, timespan=timespan, final_date=final_date, end=end)
         create_gexf(min_users=min_users, timespan=timespan, final_date=final_date, end=end)
+
         final_date = date(2020, 1, 1)
         end = date(2020, 1, 31)
-        create_edges(min_users=min_users, timespan=timespan, final_date=final_date, end=end)
-        create_nodes(min_users=min_users, timespan=timespan, final_date=final_date, end=end)
+        # create_edges(min_users=min_users, timespan=timespan, final_date=final_date, end=end)
+        # create_nodes(min_users=min_users, timespan=timespan, final_date=final_date, end=end)
         create_louvain(min_users=min_users, timespan=timespan, final_date=final_date, end=end)
         create_gexf(min_users=min_users, timespan=timespan, final_date=final_date, end=end)
+
         final_date = date(2020, 2, 1)
         end = date(2020, 2, 17)
-        create_edges(min_users=min_users, timespan=timespan, final_date=final_date, end=end)
-        create_nodes(min_users=min_users, timespan=timespan, final_date=final_date, end=end)
+        # create_edges(min_users=min_users, timespan=timespan, final_date=final_date, end=end)
+        # create_nodes(min_users=min_users, timespan=timespan, final_date=final_date, end=end)
         create_louvain(min_users=min_users, timespan=timespan, final_date=final_date, end=end)
         create_gexf(min_users=min_users, timespan=timespan, final_date=final_date, end=end)
     finally:
