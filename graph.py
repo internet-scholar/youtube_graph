@@ -426,12 +426,11 @@ def main():
         # create_louvain(min_users=min_users, timespan=timespan, final_date=final_date, end=end)
         # create_gexf(min_users=min_users, timespan=timespan, final_date=final_date, end=end)
 
+        final_date = date(2020, 1, 1)
         end = date(2020, 1, 31)
         # create_edges(min_users=min_users, timespan=timespan, final_date=final_date, end=end)
         # create_nodes(min_users=min_users, timespan=timespan, final_date=final_date, end=end)
-        final_date = date(2020, 1, 23)
         create_louvain(min_users=min_users, timespan=timespan, final_date=final_date, end=end)
-        final_date = date(2020, 1, 1)
         create_gexf(min_users=min_users, timespan=timespan, final_date=final_date, end=end)
 
         final_date = date(2020, 2, 1)
