@@ -1,13 +1,15 @@
 import networkx as nx
 import csv
 import community
-from internet_scholar import AthenaDatabase, compress, AthenaLogger, decompress
+from internet_scholar import AthenaDatabase, compress, AthenaLogger, decompress, SqliteAWS
 from datetime import date, timedelta, datetime
 import boto3
 import numpy
 from xml.etree.ElementTree import Element, SubElement
 from xml.etree import ElementTree
 from xml.dom import minidom
+import sqlite3
+import os
 
 
 SELECT_EDGES = """
@@ -390,6 +392,411 @@ def create_gexf(min_users, timespan, final_date, end):
         final_date = final_date + timedelta(days=1)
 
 
+RECOMMENDATION = """
+select distinct
+  youtube_related_video.creation_date as creation_date,
+  a.snippet.channelid as trending_id,
+  b.snippet.channelid as recommended_id
+from
+  youtube_related_video,
+  youtube_video_snippet a,
+  youtube_video_snippet b
+where
+  a.snippet.channelid is not null and
+  b.snippet.channelid is not null and
+  a.id = youtube_related_video.relatedToVideoId and
+  b.id = youtube_related_video.id.videoId and
+  youtube_related_video.creation_date between '{begin_date}' and '{end_date}'
+"""
+
+CREATE_VIEW_RELATED_VIDEO = """
+create view related_video as
+select distinct
+  creation_date as creation_date,
+  recommended_id as channel_id
+from recommendation
+UNION
+select distinct
+  creation_date as creation_date,
+  trending_id as channel_id
+from recommendation
+"""
+
+SELECT_RELATED_VIDEO = """
+select
+  channel_id as channel_id
+from
+  related_video
+where
+  creation_date = '{related_date}'
+order by channel_id
+"""
+
+SELECT_RELATED_IN_GRAPH = """
+select
+  channel_id as channel_id,
+  max(graph_size) as graph_size
+from
+  youtube_graph_louvain
+where
+  channel_id = '{channel_id}'
+group by
+  channel_id
+"""
+
+SELECT_CHANNELS_IN_THE_SAME_CLUSTER = """
+select
+  aux.resolution as resolution,
+  aux.channel_id as channel_id,
+  aux.cluster as cluster,
+  aux.graph_size as graph_size,
+  aux.cluster_size as cluster_size,
+  aux.cluster_count as cluster_count
+from
+  youtube_graph_louvain aux,
+  (select *
+  from youtube_graph_louvain b_aux
+  where
+    b_aux.channel_id = '{channel_id}') b_aux
+where
+  aux.resolution = b_aux.resolution and
+  aux.cluster = b_aux.cluster
+order by
+  cast(aux.resolution as real);
+"""
+
+SELECT_ALL_NODES_IN_GRAPH = """
+select distinct
+  channel_id as channel_id
+from
+  youtube_graph_louvain
+order by channel_id
+"""
+
+CREATE_TABLE_YOUTUBE_GRAPH_CLASSIFICATION = """
+CREATE TABLE youtube_graph_classification (
+  related_channel_id text,
+  graph_channel_id text,
+  resolution text,
+  cluster text,
+  graph_size text,
+  cluster_size text,
+  cluster_count text,
+  relationship text,
+  PRIMARY KEY (related_channel_id, graph_channel_id)
+)
+"""
+
+INSERT_CLASSIFICATION = """
+INSERT OR IGNORE INTO youtube_graph_classification
+(related_channel_id,
+graph_channel_id,
+resolution,
+cluster,
+graph_size,
+cluster_size,
+cluster_count,
+relationship)
+values (?, ?, ?, ?, ?, ?, ?, ?)
+"""
+
+CREATE_TABLE_YOUTUBE_GRAPH_RELATED = """
+CREATE TABLE youtube_graph_related(
+  trending_channel_id text,
+  recommended_channel_id text,
+  resolution text,
+  cluster text,
+  graph_size text,
+  cluster_size text,
+  cluster_count text,
+  relationship text
+)
+"""
+
+INSERT_RELATED_KNOWN = """
+insert into youtube_graph_related
+(trending_channel_id, recommended_channel_id, resolution, cluster, graph_size, cluster_size,
+ cluster_count, relationship)
+select
+  recommendation.trending_id,
+  recommendation.recommended_id,
+  youtube_graph_classification.resolution,
+  youtube_graph_classification.cluster,
+  youtube_graph_classification.graph_size,
+  youtube_graph_classification.cluster_size,
+  youtube_graph_classification.cluster_count,
+  youtube_graph_classification.relationship
+from
+  recommendation,
+  youtube_graph_classification
+where
+  creation_date = '{related_date}' and
+  recommendation.trending_id = youtube_graph_classification.related_channel_id and
+  recommendation.recommended_id = youtube_graph_classification.graph_channel_id;
+"""
+
+INSERT_UNKNOWN_RECOMMENDED = """
+insert into youtube_graph_related
+(trending_channel_id, recommended_channel_id, resolution, cluster, graph_size, cluster_size,
+ cluster_count, relationship)
+select
+  recommendation.trending_id,
+  recommendation.recommended_id,
+  '-1',
+  '-1',
+  '-1',
+  '-1',
+  '-1',
+  'UNKNOWN_RECOMMENDED'
+from recommendation
+where
+  creation_date = '{related_date}' and
+  recommendation.trending_id in (select channel_id from youtube_graph_louvain) and
+  recommendation.recommended_id not in (select channel_id from youtube_graph_louvain)
+"""
+
+INSERT_UNKNOWN_IDENTITY = """
+insert into youtube_graph_related
+(trending_channel_id, recommended_channel_id, resolution, cluster, graph_size, cluster_size,
+ cluster_count, relationship)
+select
+  recommendation.trending_id,
+  recommendation.recommended_id,
+  '-1',
+  '-1',
+  '-1',
+  '-1',
+  '-1',
+  'UNKNOWN_IDENTITY'
+from recommendation
+where
+  creation_date = '{related_date}' and
+  trending_id = recommended_id and
+  recommendation.trending_id not in (select channel_id from youtube_graph_louvain) and
+  recommendation.recommended_id not in (select channel_id from youtube_graph_louvain)
+"""
+
+INSERT_UNKNOWN_BOTH = """
+insert into youtube_graph_related
+(trending_channel_id, recommended_channel_id, resolution, cluster, graph_size, cluster_size,
+ cluster_count, relationship)
+select
+  recommendation.trending_id,
+  recommendation.recommended_id,
+  '-1',
+  '-1',
+  '-1',
+  '-1',
+  '-1',
+  'UNKNOWN_BOTH'
+from recommendation
+where
+  creation_date = '{related_date}' and
+  trending_id <> recommended_id and
+  recommendation.trending_id not in (select channel_id from youtube_graph_louvain) and
+  recommendation.recommended_id not in (select channel_id from youtube_graph_louvain)
+"""
+
+INSERT_UNKNOWN_TRENDING = """
+insert into youtube_graph_related
+(trending_channel_id, recommended_channel_id, resolution, cluster, graph_size, cluster_size,
+ cluster_count, relationship)
+select
+  recommendation.trending_id,
+  recommendation.recommended_id,
+  '-1',
+  '-1',
+  '-1',
+  '-1',
+  '-1',
+  'UNKNOWN_TRENDING'
+from recommendation
+where
+  creation_date = '{related_date}' and
+  recommendation.trending_id not in (select channel_id from youtube_graph_louvain) and
+  recommendation.recommended_id in (select channel_id from youtube_graph_louvain)
+"""
+
+CREATE_ATHENA_TABLE_YOUTUBE_GRAPH_CLASSIFICATION = """
+CREATE EXTERNAL TABLE if not exists youtube_graph_classification (
+   related_channel_id string,
+   graph_channel_id string,
+   resolution float,
+   cluster int,
+   graph_size int,
+   cluster_size int,
+   cluster_count int,
+   relationship string
+)
+partitioned by (related_date string, graph_date_difference int, min_users int, timespan int)
+ROW FORMAT SERDE 'org.apache.hadoop.hive.serde2.OpenCSVSerde'
+WITH SERDEPROPERTIES (
+   'separatorChar' = ',',
+   'quoteChar' = '"',
+   'skip.header.line.count' = '1'
+   )
+STORED AS TEXTFILE
+LOCATION 's3://{s3_data}/youtube_graph_classification/';
+"""
+
+CREATE_ATHENA_TABLE_YOUTUBE_GRAPH_RELATED = """
+CREATE EXTERNAL TABLE if not exists youtube_graph_related (
+   trending_channel_id string,
+   recommended_channel_id string,
+   resolution float,
+   cluster int,
+   graph_size int,
+   cluster_size int,
+   cluster_count int,
+   relationship string
+)
+partitioned by (related_date string, graph_date_difference int, min_users int, timespan int)
+ROW FORMAT SERDE 'org.apache.hadoop.hive.serde2.OpenCSVSerde'
+WITH SERDEPROPERTIES (
+   'separatorChar' = ',',
+   'quoteChar' = '"',
+   'skip.header.line.count' = '1'
+   )
+STORED AS TEXTFILE
+LOCATION 's3://{s3_data}/youtube_graph_related/'
+"""
+
+
+def create_classification_tables(min_users, timespan, related_date, end_related_date, graph_date_difference):
+    graph_date = related_date + timedelta(days=graph_date_difference)
+    database = sqlite3.connect('./classification.sqlite')
+
+    sqlite_aws = SqliteAWS(database=database,
+                           s3_admin='internet-scholar-admin',
+                           s3_data='internet-scholar',
+                           athena_db='internet_scholar')
+
+    sqlite_aws.convert_athena_query_to_sqlite(table_name='recommendation',
+                                              query=RECOMMENDATION.format(begin_date=str(related_date),
+                                                                          end_date=str(end_related_date)))
+    database.execute(CREATE_VIEW_RELATED_VIDEO)
+    database.row_factory = sqlite3.Row
+
+    while related_date <= end_related_date:
+        print('Classification - related: {related_date} graph: {graph_date}'.format(related_date=str(related_date),
+                                                                                    graph_date=str(graph_date)))
+        sqlite_aws.convert_s3_csv_to_sqlite(
+            s3_path='youtube_graph_louvain/'
+                    'min_users={min_users}/'
+                    'timespan={timespan}/'
+                    'final_date={graph_date}/louvain.csv.bz2'.format(min_users=min_users,
+                                                                     timespan=timespan,
+                                                                     graph_date=str(graph_date)))
+        database.execute(CREATE_TABLE_YOUTUBE_GRAPH_CLASSIFICATION)
+        cursor_related = database.cursor()
+        cursor_related.execute(SELECT_RELATED_VIDEO.format(related_date=str(related_date)))
+        for related_video in cursor_related:
+            cursor_related_in_graph = database.cursor()
+            cursor_related_in_graph.execute(SELECT_RELATED_IN_GRAPH.format(channel_id=related_video['channel_id']))
+            exists_in_graph = False
+            for related_in_graph in cursor_related_in_graph:
+                exists_in_graph = True
+                # add IDENTITY record
+                database.execute(INSERT_CLASSIFICATION,
+                                 (related_in_graph['channel_id'],
+                                  related_in_graph['channel_id'],
+                                  '0.0',
+                                  '0',
+                                  related_in_graph['graph_size'],
+                                  '1',
+                                  related_in_graph['graph_size'],
+                                  'IDENTITY'))
+                cursor_channel_in_the_same_cluster = database.cursor()
+                cursor_channel_in_the_same_cluster.execute(SELECT_CHANNELS_IN_THE_SAME_CLUSTER.format(
+                    channel_id=related_video['channel_id']))
+                # add KINSHIP record
+                for channel_in_the_same_cluster in cursor_channel_in_the_same_cluster:
+                    database.execute(INSERT_CLASSIFICATION,
+                                     (related_in_graph['channel_id'],
+                                      channel_in_the_same_cluster['channel_id'],
+                                      channel_in_the_same_cluster['resolution'],
+                                      channel_in_the_same_cluster['cluster'],
+                                      channel_in_the_same_cluster['graph_size'],
+                                      channel_in_the_same_cluster['cluster_size'],
+                                      channel_in_the_same_cluster['cluster_count'],
+                                      'KINSHIP'))
+                cursor_all_nodes_in_graph = database.cursor()
+                cursor_all_nodes_in_graph.execute(SELECT_ALL_NODES_IN_GRAPH)
+                # add OPPOSITION record
+                for node_in_graph in cursor_all_nodes_in_graph:
+                    database.execute(INSERT_CLASSIFICATION,
+                                     (related_in_graph['channel_id'],
+                                      node_in_graph['channel_id'],
+                                      '10.0',
+                                      '-1',
+                                      related_in_graph['graph_size'],
+                                      related_in_graph['graph_size'],
+                                      '1',
+                                      'OPPOSITION'))
+            if not exists_in_graph:
+                cursor_all_nodes_in_graph = database.cursor()
+                cursor_all_nodes_in_graph.execute(SELECT_ALL_NODES_IN_GRAPH)
+                # add UNKNOWN records
+                for node_in_graph in cursor_all_nodes_in_graph:
+                    database.execute(INSERT_CLASSIFICATION,
+                                     (related_video['channel_id'],
+                                      node_in_graph['channel_id'],
+                                      '-1',
+                                      '-1',
+                                      '-1',
+                                      '-1',
+                                      '-1',
+                                      'UNKNOWN'))
+
+        database.execute(CREATE_TABLE_YOUTUBE_GRAPH_RELATED.format(related_date=str(related_date)))
+        database.execute(INSERT_RELATED_KNOWN.format(related_date=str(related_date)))
+        database.execute(INSERT_UNKNOWN_IDENTITY.format(related_date=str(related_date)))
+        database.execute(INSERT_UNKNOWN_RECOMMENDED.format(related_date=str(related_date)))
+        database.execute(INSERT_UNKNOWN_TRENDING.format(related_date=str(related_date)))
+        database.execute(INSERT_UNKNOWN_BOTH.format(related_date=str(related_date)))
+        database.commit()
+
+        sqlite_aws.convert_sqlite_to_s3_csv(s3_path='youtube_graph_classification/'
+                                                    'related_date={related_date}/'
+                                                    'graph_date_difference={graph_date_difference}/'
+                                                    'min_users={min_users}/'
+                                                    'timespan={timespan}/'
+                                                    'classification.csv.bz2'.format(related_date=str(related_date),
+                                                                                    graph_date_difference=graph_date_difference,
+                                                                                    min_users=min_users,
+                                                                                    timespan=timespan),
+                                            order_by='related_channel_id, graph_channel_id')
+        sqlite_aws.convert_sqlite_to_s3_csv(s3_path='youtube_graph_related/'
+                                                    'related_date={related_date}/'
+                                                    'graph_date_difference={graph_date_difference}/'
+                                                    'min_users={min_users}/'
+                                                    'timespan={timespan}/'
+                                                    'related.csv.bz2'.format(related_date=str(related_date),
+                                                                             graph_date_difference=graph_date_difference,
+                                                                             min_users=min_users,
+                                                                             timespan=timespan),
+                                            order_by='trending_channel_id, recommended_channel_id')
+
+        database.execute('DROP TABLE youtube_graph_related')
+        database.execute('DROP TABLE youtube_graph_classification')
+        database.execute('DROP TABLE youtube_graph_louvain')
+        database.commit()
+
+        graph_date = graph_date + timedelta(days=1)
+        related_date = related_date + timedelta(days=1)
+
+    athena = AthenaDatabase(database='internet_scholar', s3_output='internet-scholar-admin')
+    athena.query_athena_and_wait('DROP TABLE IF EXISTS youtube_graph_classification')
+    athena.query_athena_and_wait(CREATE_ATHENA_TABLE_YOUTUBE_GRAPH_CLASSIFICATION.format(s3_data='internet-scholar'))
+    athena.query_athena_and_wait('MSCK REPAIR TABLE youtube_graph_classification')
+    athena.query_athena_and_wait('DROP TABLE IF EXISTS youtube_graph_related')
+    athena.query_athena_and_wait(CREATE_ATHENA_TABLE_YOUTUBE_GRAPH_RELATED.format(s3_data='internet-scholar'))
+    athena.query_athena_and_wait('MSCK REPAIR TABLE youtube_graph_related')
+
+    database.close()
+    os.remove('classification.sqlite')
+
+
 def main():
     logger = AthenaLogger(app_name="youtube_analysis",
                           s3_bucket='internet-scholar-admin',
@@ -397,6 +804,12 @@ def main():
     try:
         min_users = 3
         timespan = 60
+
+        final_date = date(2019, 10, 13)
+        end = date(2019, 10, 14)
+        create_classification_tables(min_users=min_users, timespan=timespan,
+                                     related_date=final_date, end_related_date=end,
+                                     graph_date_difference=0)
 
         # final_date = date(2019, 10, 13)
         # end = date(2019, 10, 14)
@@ -426,19 +839,19 @@ def main():
         # create_louvain(min_users=min_users, timespan=timespan, final_date=final_date, end=end)
         # create_gexf(min_users=min_users, timespan=timespan, final_date=final_date, end=end)
 
-        final_date = date(2020, 1, 1)
-        end = date(2020, 1, 31)
+        # final_date = date(2020, 1, 1)
+        # end = date(2020, 1, 31)
         # create_edges(min_users=min_users, timespan=timespan, final_date=final_date, end=end)
         # create_nodes(min_users=min_users, timespan=timespan, final_date=final_date, end=end)
-        create_louvain(min_users=min_users, timespan=timespan, final_date=final_date, end=end)
-        create_gexf(min_users=min_users, timespan=timespan, final_date=final_date, end=end)
+        #create_louvain(min_users=min_users, timespan=timespan, final_date=final_date, end=end)
+        #create_gexf(min_users=min_users, timespan=timespan, final_date=final_date, end=end)
 
-        final_date = date(2020, 2, 1)
-        end = date(2020, 2, 17)
+        # final_date = date(2020, 2, 1)
+        # end = date(2020, 2, 17)
         # create_edges(min_users=min_users, timespan=timespan, final_date=final_date, end=end)
         # create_nodes(min_users=min_users, timespan=timespan, final_date=final_date, end=end)
-        create_louvain(min_users=min_users, timespan=timespan, final_date=final_date, end=end)
-        create_gexf(min_users=min_users, timespan=timespan, final_date=final_date, end=end)
+        # create_louvain(min_users=min_users, timespan=timespan, final_date=final_date, end=end)
+        # create_gexf(min_users=min_users, timespan=timespan, final_date=final_date, end=end)
     finally:
         logger.save_to_s3()
         #logger.recreate_athena_table()
