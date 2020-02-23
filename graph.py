@@ -805,53 +805,65 @@ def main():
         min_users = 3
         timespan = 60
 
-        final_date = date(2019, 10, 13)
-        end = date(2019, 10, 14)
-        create_classification_tables(min_users=min_users, timespan=timespan,
-                                     related_date=final_date, end_related_date=end,
-                                     graph_date_difference=0)
-
         # final_date = date(2019, 10, 13)
         # end = date(2019, 10, 14)
         # create_edges(min_users=min_users, timespan=timespan, final_date=final_date, end=end)
         # create_nodes(min_users=min_users, timespan=timespan, final_date=final_date, end=end)
         # create_louvain(min_users=min_users, timespan=timespan, final_date=final_date, end=end)
         # create_gexf(min_users=min_users, timespan=timespan, final_date=final_date, end=end)
+        # create_classification_tables(min_users=min_users, timespan=timespan,
+        #                              related_date=final_date, end_related_date=end,
+        #                              graph_date_difference=0)
 
-        # final_date = date(2019, 10, 15)
-        # end = date(2019, 10, 31)
+        final_date = date(2019, 10, 15)
+        end = date(2019, 10, 31)
         # # create_edges(min_users=min_users, timespan=timespan, final_date=final_date, end=end)
         # # create_nodes(min_users=min_users, timespan=timespan, final_date=final_date, end=end)
         # create_louvain(min_users=min_users, timespan=timespan, final_date=final_date, end=end)
         # create_gexf(min_users=min_users, timespan=timespan, final_date=final_date, end=end)
+        create_classification_tables(min_users=min_users, timespan=timespan,
+                                     related_date=final_date, end_related_date=end,
+                                     graph_date_difference=0)
         #
-        # final_date = date(2019, 11, 1)
-        # end = date(2019, 11, 30)
+        final_date = date(2019, 11, 1)
+        end = date(2019, 11, 30)
         # # create_edges(min_users=min_users, timespan=timespan, final_date=final_date, end=end)
         # # create_nodes(min_users=min_users, timespan=timespan, final_date=final_date, end=end)
         # create_louvain(min_users=min_users, timespan=timespan, final_date=final_date, end=end)
         # create_gexf(min_users=min_users, timespan=timespan, final_date=final_date, end=end)
+        create_classification_tables(min_users=min_users, timespan=timespan,
+                                     related_date=final_date, end_related_date=end,
+                                     graph_date_difference=0)
         #
-        # final_date = date(2019, 12, 1)
-        # end = date(2019, 12, 31)
+        final_date = date(2019, 12, 1)
+        end = date(2019, 12, 31)
         # # create_edges(min_users=min_users, timespan=timespan, final_date=final_date, end=end)
         # # create_nodes(min_users=min_users, timespan=timespan, final_date=final_date, end=end)
         # create_louvain(min_users=min_users, timespan=timespan, final_date=final_date, end=end)
         # create_gexf(min_users=min_users, timespan=timespan, final_date=final_date, end=end)
+        create_classification_tables(min_users=min_users, timespan=timespan,
+                                     related_date=final_date, end_related_date=end,
+                                     graph_date_difference=0)
 
-        # final_date = date(2020, 1, 1)
-        # end = date(2020, 1, 31)
+        final_date = date(2020, 1, 1)
+        end = date(2020, 1, 31)
         # create_edges(min_users=min_users, timespan=timespan, final_date=final_date, end=end)
         # create_nodes(min_users=min_users, timespan=timespan, final_date=final_date, end=end)
         #create_louvain(min_users=min_users, timespan=timespan, final_date=final_date, end=end)
         #create_gexf(min_users=min_users, timespan=timespan, final_date=final_date, end=end)
+        create_classification_tables(min_users=min_users, timespan=timespan,
+                                     related_date=final_date, end_related_date=end,
+                                     graph_date_difference=0)
 
-        # final_date = date(2020, 2, 1)
-        # end = date(2020, 2, 17)
+        final_date = date(2020, 2, 1)
+        end = date(2020, 2, 17)
         # create_edges(min_users=min_users, timespan=timespan, final_date=final_date, end=end)
         # create_nodes(min_users=min_users, timespan=timespan, final_date=final_date, end=end)
         # create_louvain(min_users=min_users, timespan=timespan, final_date=final_date, end=end)
         # create_gexf(min_users=min_users, timespan=timespan, final_date=final_date, end=end)
+        create_classification_tables(min_users=min_users, timespan=timespan,
+                                     related_date=final_date, end_related_date=end,
+                                     graph_date_difference=0)
     finally:
         logger.save_to_s3()
         #logger.recreate_athena_table()
