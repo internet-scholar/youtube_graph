@@ -103,6 +103,31 @@ def create_edges(min_users, timespan, final_date, end):
     athena_db.query_athena_and_wait(query_string='MSCK REPAIR TABLE youtube_graph_edge')
 
 
+CREATE_VIEW_ENHANCED_CHANNEL_STATS = """
+create or replace view youtube_enhanced_channel_stats as
+select
+  creation_date,
+  id as channel_id,
+  if(statistics.viewcount - lag(statistics.viewcount, 1, statistics.viewcount) over (partition by id order by creation_date) > 0,
+     statistics.viewcount - lag(statistics.viewcount, 1, statistics.viewcount) over (partition by id order by creation_date),
+     0) as view_count,
+  statistics.viewcount as cumulative_view_count,
+  if(statistics.subscribercount - lag(statistics.subscribercount, 1, statistics.subscribercount) over (partition by id order by creation_date) > 0,
+     statistics.subscribercount - lag(statistics.subscribercount, 1, statistics.subscribercount) over (partition by id order by creation_date),
+     0) as subscriber_count,
+  statistics.subscribercount as cumulative_subscriber_count,
+  if(statistics.videocount - lag(statistics.videocount, 1, statistics.videocount) over (partition by id order by creation_date) > 0,
+     statistics.videocount - lag(statistics.videocount, 1, statistics.videocount) over (partition by id order by creation_date),
+     0) as video_count,
+  statistics.videocount as cumulative_video_count,
+  if(statistics.commentcount - lag(statistics.commentcount, 1, statistics.commentcount) over (partition by id order by creation_date) > 0,
+     statistics.commentcount - lag(statistics.commentcount, 1, statistics.commentcount) over (partition by id order by creation_date),
+     0) as comment_count,
+  statistics.commentcount as cumulative_comment_count
+from
+  youtube_channel_stats
+"""
+
 SELECT_NODES = """
 with all_nodes as
 (
@@ -126,22 +151,20 @@ SELECT
   all_nodes.channel_id channel_id,
   max_by(replace(replace(replace(replace(replace(youtube_video_snippet.snippet.channelTitle, chr(10), ' '), '"', ' '), '\\', '-'), chr(13), ' '), chr(9), ' '),
          youtube_video_snippet.snippet.publishedAt) channel_title,
-  coalesce(max(youtube_channel_stats.statistics.viewcount), 0) as cumulative_view_count,
-  coalesce(max(youtube_channel_stats.statistics.viewcount), 0) -
-  coalesce(min(youtube_channel_stats.statistics.viewcount), 0) as view_count,
-  coalesce(max(youtube_channel_stats.statistics.videocount), 0) as cumulative_video_count,
-  coalesce(max(youtube_channel_stats.statistics.videocount), 0) -
-  coalesce(min(youtube_channel_stats.statistics.videocount), 0) as video_count,
-  coalesce(max(youtube_channel_stats.statistics.commentcount), 0) as cumulative_comment_count,
-  coalesce(max(youtube_channel_stats.statistics.commentcount), 0) -
-  coalesce(min(youtube_channel_stats.statistics.commentcount), 0) as comment_count,
-  coalesce(max(youtube_channel_stats.statistics.subscribercount), 0) as cumulative_subscriber_count,
-  coalesce(max(youtube_channel_stats.statistics.subscribercount), 0) -
-  coalesce(min(youtube_channel_stats.statistics.subscribercount), 0) as subscriber_count
+  coalesce(max_by(youtube_enhanced_channel_stats.cumulative_view_count, youtube_enhanced_channel_stats.creation_date), 0) as cumulative_view_count,
+  coalesce(sum(youtube_enhanced_channel_stats.view_count), 0) as view_count,
+  coalesce(max_by(youtube_enhanced_channel_stats.cumulative_video_count, youtube_enhanced_channel_stats.creation_date), 0) as cumulative_video_count,
+  coalesce(sum(youtube_enhanced_channel_stats.video_count), 0) as video_count,
+  coalesce(max_by(youtube_enhanced_channel_stats.cumulative_comment_count, youtube_enhanced_channel_stats.creation_date), 0) as cumulative_comment_count,
+  coalesce(sum(youtube_enhanced_channel_stats.comment_count), 0) as comment_count,
+  coalesce(max_by(youtube_enhanced_channel_stats.cumulative_subscriber_count, youtube_enhanced_channel_stats.creation_date), 0) as cumulative_subscriber_count,
+  coalesce(sum(youtube_enhanced_channel_stats.subscriber_count), 0) as subscriber_count
 FROM
-  all_nodes inner join youtube_video_snippet on all_nodes.channel_id = youtube_video_snippet.snippet.channelid
-  left join youtube_channel_stats on youtube_video_snippet.snippet.channelid = youtube_channel_stats.id and
-       youtube_channel_stats.creation_date between '{initial_date}' and '{final_date}'
+  all_nodes inner join youtube_video_snippet on
+    all_nodes.channel_id = youtube_video_snippet.snippet.channelid
+  left join youtube_enhanced_channel_stats on
+    all_nodes.channel_id = youtube_enhanced_channel_stats.channel_id and
+    youtube_enhanced_channel_stats.creation_date between '{initial_date}' and '{final_date}'
 group by
   all_nodes.channel_id
 """
@@ -176,6 +199,7 @@ def create_nodes(min_users, timespan, final_date, end):
     athena_db = AthenaDatabase(database='internet_scholar', s3_output='internet-scholar-admin')
     min_date = athena_db.query_athena_and_get_result(query_string=MIN_DATE)['min_date']
     min_date = datetime.strptime(min_date, '%Y-%m-%d').date()
+    athena_db.query_athena_and_wait(query_string=CREATE_VIEW_ENHANCED_CHANNEL_STATS)
     initial_date = final_date - timedelta(days=timespan-1)
     while final_date <= end:
         print('Nodes - {}'.format(str(final_date)))
@@ -817,52 +841,52 @@ def main():
         #                              related_date=final_date, end_related_date=end,
         #                              graph_date_difference=graph_date_difference)
 
-        # final_date = date(2019, 10, 15)
-        # end = date(2019, 10, 31)
+        final_date = date(2019, 10, 15)
+        end = date(2019, 10, 31)
         # # create_edges(min_users=min_users, timespan=timespan, final_date=final_date, end=end)
-        # # create_nodes(min_users=min_users, timespan=timespan, final_date=final_date, end=end)
+        create_nodes(min_users=min_users, timespan=timespan, final_date=final_date, end=end)
         # create_louvain(min_users=min_users, timespan=timespan, final_date=final_date, end=end)
-        # create_gexf(min_users=min_users, timespan=timespan, final_date=final_date, end=end)
+        create_gexf(min_users=min_users, timespan=timespan, final_date=final_date, end=end)
         # create_classification_tables(min_users=min_users, timespan=timespan,
         #                              related_date=final_date, end_related_date=end,
         #                              graph_date_difference=graph_date_difference)
         #
-        # final_date = date(2019, 11, 1)
-        # end = date(2019, 11, 30)
+        final_date = date(2019, 11, 1)
+        end = date(2019, 11, 30)
         # # create_edges(min_users=min_users, timespan=timespan, final_date=final_date, end=end)
-        # # create_nodes(min_users=min_users, timespan=timespan, final_date=final_date, end=end)
+        create_nodes(min_users=min_users, timespan=timespan, final_date=final_date, end=end)
         # create_louvain(min_users=min_users, timespan=timespan, final_date=final_date, end=end)
-        # create_gexf(min_users=min_users, timespan=timespan, final_date=final_date, end=end)
+        create_gexf(min_users=min_users, timespan=timespan, final_date=final_date, end=end)
         # create_classification_tables(min_users=min_users, timespan=timespan,
         #                              related_date=final_date, end_related_date=end,
         #                              graph_date_difference=graph_date_difference)
         #
-        # final_date = date(2019, 12, 1)
-        # end = date(2019, 12, 31)
+        final_date = date(2019, 12, 1)
+        end = date(2019, 12, 31)
         # # create_edges(min_users=min_users, timespan=timespan, final_date=final_date, end=end)
-        # # create_nodes(min_users=min_users, timespan=timespan, final_date=final_date, end=end)
+        create_nodes(min_users=min_users, timespan=timespan, final_date=final_date, end=end)
         # create_louvain(min_users=min_users, timespan=timespan, final_date=final_date, end=end)
-        # create_gexf(min_users=min_users, timespan=timespan, final_date=final_date, end=end)
+        create_gexf(min_users=min_users, timespan=timespan, final_date=final_date, end=end)
         # create_classification_tables(min_users=min_users, timespan=timespan,
         #                              related_date=final_date, end_related_date=end,
         #                              graph_date_difference=graph_date_difference)
 
-        # final_date = date(2020, 1, 1)
-        # end = date(2020, 1, 31)
+        final_date = date(2020, 1, 1)
+        end = date(2020, 1, 31)
         # create_edges(min_users=min_users, timespan=timespan, final_date=final_date, end=end)
-        # create_nodes(min_users=min_users, timespan=timespan, final_date=final_date, end=end)
-        #create_louvain(min_users=min_users, timespan=timespan, final_date=final_date, end=end)
-        #create_gexf(min_users=min_users, timespan=timespan, final_date=final_date, end=end)
+        create_nodes(min_users=min_users, timespan=timespan, final_date=final_date, end=end)
+        # create_louvain(min_users=min_users, timespan=timespan, final_date=final_date, end=end)
+        create_gexf(min_users=min_users, timespan=timespan, final_date=final_date, end=end)
         # create_classification_tables(min_users=min_users, timespan=timespan,
         #                              related_date=final_date, end_related_date=end,
         #                              graph_date_difference=graph_date_difference)
 
-        # final_date = date(2020, 2, 1)
-        # end = date(2020, 2, 20)
+        final_date = date(2020, 2, 1)
+        end = date(2020, 2, 20)
         # create_edges(min_users=min_users, timespan=timespan, final_date=final_date, end=end)
-        # create_nodes(min_users=min_users, timespan=timespan, final_date=final_date, end=end)
+        create_nodes(min_users=min_users, timespan=timespan, final_date=final_date, end=end)
         # create_louvain(min_users=min_users, timespan=timespan, final_date=final_date, end=end)
-        # create_gexf(min_users=min_users, timespan=timespan, final_date=final_date, end=end)
+        create_gexf(min_users=min_users, timespan=timespan, final_date=final_date, end=end)
         # create_classification_tables(min_users=min_users, timespan=timespan,
         #                              related_date=final_date, end_related_date=end,
         #                              graph_date_difference=graph_date_difference)
